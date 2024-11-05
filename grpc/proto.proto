@@ -1,0 +1,22 @@
+syntax = "proto3";
+option go_package = "github.com/victormemborg/Consensus/grpc";
+
+service Node {
+    rpc InformArrival (NodeInfo) returns (Empty);
+    rpc ElectLeader (Request) returns (Reply);
+}
+
+message NodeInfo {
+    int32 id = 1;
+    string address = 2;
+}
+
+message Request {
+    int32 sender = 1;
+}
+
+message Reply {
+    bool granted = 1;
+}
+
+message Empty {}
