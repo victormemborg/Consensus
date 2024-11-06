@@ -21,6 +21,9 @@ const _ = grpc.SupportPackageIsVersion9
 const (
 	Node_InformArrival_FullMethodName = "/Node/InformArrival"
 	Node_ElectLeader_FullMethodName   = "/Node/ElectLeader"
+	Node_RequestAccess_FullMethodName = "/Node/RequestAccess"
+	Node_SendHeartbeat_FullMethodName = "/Node/SendHeartbeat"
+	Node_RequestVote_FullMethodName   = "/Node/RequestVote"
 )
 
 // NodeClient is the client API for Node service.
@@ -29,6 +32,9 @@ const (
 type NodeClient interface {
 	InformArrival(ctx context.Context, in *NodeInfo, opts ...grpc.CallOption) (*Empty, error)
 	ElectLeader(ctx context.Context, in *Request, opts ...grpc.CallOption) (*Reply, error)
+	RequestAccess(ctx context.Context, in *NodeInfo, opts ...grpc.CallOption) (*Reply, error)
+	SendHeartbeat(ctx context.Context, in *NodeInfo, opts ...grpc.CallOption) (*Empty, error)
+	RequestVote(ctx context.Context, in *Request, opts ...grpc.CallOption) (*Reply, error)
 }
 
 type nodeClient struct {
@@ -59,12 +65,45 @@ func (c *nodeClient) ElectLeader(ctx context.Context, in *Request, opts ...grpc.
 	return out, nil
 }
 
+func (c *nodeClient) RequestAccess(ctx context.Context, in *NodeInfo, opts ...grpc.CallOption) (*Reply, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Reply)
+	err := c.cc.Invoke(ctx, Node_RequestAccess_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeClient) SendHeartbeat(ctx context.Context, in *NodeInfo, opts ...grpc.CallOption) (*Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Empty)
+	err := c.cc.Invoke(ctx, Node_SendHeartbeat_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeClient) RequestVote(ctx context.Context, in *Request, opts ...grpc.CallOption) (*Reply, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Reply)
+	err := c.cc.Invoke(ctx, Node_RequestVote_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // NodeServer is the server API for Node service.
 // All implementations must embed UnimplementedNodeServer
 // for forward compatibility.
 type NodeServer interface {
 	InformArrival(context.Context, *NodeInfo) (*Empty, error)
 	ElectLeader(context.Context, *Request) (*Reply, error)
+	RequestAccess(context.Context, *NodeInfo) (*Reply, error)
+	SendHeartbeat(context.Context, *NodeInfo) (*Empty, error)
+	RequestVote(context.Context, *Request) (*Reply, error)
 	mustEmbedUnimplementedNodeServer()
 }
 
@@ -80,6 +119,15 @@ func (UnimplementedNodeServer) InformArrival(context.Context, *NodeInfo) (*Empty
 }
 func (UnimplementedNodeServer) ElectLeader(context.Context, *Request) (*Reply, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ElectLeader not implemented")
+}
+func (UnimplementedNodeServer) RequestAccess(context.Context, *NodeInfo) (*Reply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RequestAccess not implemented")
+}
+func (UnimplementedNodeServer) SendHeartbeat(context.Context, *NodeInfo) (*Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SendHeartbeat not implemented")
+}
+func (UnimplementedNodeServer) RequestVote(context.Context, *Request) (*Reply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RequestVote not implemented")
 }
 func (UnimplementedNodeServer) mustEmbedUnimplementedNodeServer() {}
 func (UnimplementedNodeServer) testEmbeddedByValue()              {}
@@ -138,6 +186,60 @@ func _Node_ElectLeader_Handler(srv interface{}, ctx context.Context, dec func(in
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Node_RequestAccess_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(NodeInfo)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServer).RequestAccess(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Node_RequestAccess_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServer).RequestAccess(ctx, req.(*NodeInfo))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Node_SendHeartbeat_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(NodeInfo)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServer).SendHeartbeat(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Node_SendHeartbeat_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServer).SendHeartbeat(ctx, req.(*NodeInfo))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Node_RequestVote_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Request)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServer).RequestVote(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Node_RequestVote_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServer).RequestVote(ctx, req.(*Request))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Node_ServiceDesc is the grpc.ServiceDesc for Node service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -152,6 +254,18 @@ var Node_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ElectLeader",
 			Handler:    _Node_ElectLeader_Handler,
+		},
+		{
+			MethodName: "RequestAccess",
+			Handler:    _Node_RequestAccess_Handler,
+		},
+		{
+			MethodName: "SendHeartbeat",
+			Handler:    _Node_SendHeartbeat_Handler,
+		},
+		{
+			MethodName: "RequestVote",
+			Handler:    _Node_RequestVote_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
