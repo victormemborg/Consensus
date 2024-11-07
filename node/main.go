@@ -13,17 +13,28 @@ import (
 )
 
 var (
-	serviceRegistry   = make(map[int32]string) // id -> address
-	registryMutex     = sync.Mutex{}           // mutex for registry
-	csMutex           = sync.Mutex{}           // mutex for critical section
-	csRequest         = []int32{}              // queue of requests for critical section
-	csUsed            = false                  // if critical section is in use
-	heartbeatTimeout  = 10 * time.Second       // seconds between heartbeats
+	serviceReg        = NewServiceRegistry() // service registry for discovery
+	csMutex           = sync.Mutex{}         // mutex for critical section
+	csRequest         = []int32{}            // queue of requests for critical section
+	csUsed            = false                // if critical section is in use
+	heartbeatTimeout  = 10 * time.Second     // seconds between heartbeats
 	heartbeatInterval = 1 * time.Second
 )
 
+type ServiceRegistry struct {
+	mu       sync.Mutex
+	services map[int32]string // id -> address
+}
+
+func NewServiceRegistry() *ServiceRegistry {
+	return &ServiceRegistry{
+		services: make(map[int32]string),
+	}
+}
+
 type Node struct {
 	pb.NodeServer
+	mu            sync.Mutex
 	id            int32
 	address       string
 	peers         map[int32]pb.NodeClient // id -> client
@@ -39,7 +50,7 @@ func NewNode(id int32, address string) *Node {
 		peers:         make(map[int32]pb.NodeClient),
 		leader:        -1, // no leader when starting
 		term:          0,
-		lastHeartbeat: time.Now(),
+		lastHeartbeat: time.Now().Add(time.Duration(rand.IntN(150)) * time.Millisecond),
 	}
 }
 
@@ -68,10 +79,10 @@ func (n *Node) start() {
 }
 
 func (n *Node) registerService() error {
-	registryMutex.Lock()
-	defer registryMutex.Unlock()
+	serviceReg.mu.Lock()
+	defer serviceReg.mu.Unlock()
 
-	for k, v := range serviceRegistry {
+	for k, v := range serviceReg.services {
 		n.addPeer(k, v)
 	}
 
@@ -84,8 +95,20 @@ func (n *Node) registerService() error {
 		}
 	}
 
-	serviceRegistry[n.id] = n.address
+	serviceReg.services[n.id] = n.address
 	return nil
+}
+
+func (n *Node) addPeer(id int32, address string) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	conn, err := grpc.NewClient(address, grpc.WithInsecure())
+	if err != nil {
+		fmt.Printf("Unable to connect to %s: %v\n", address, err)
+	}
+
+	n.peers[id] = pb.NewNodeClient(conn)
 }
 
 ///////////////////////////////////////////////////////
@@ -94,6 +117,9 @@ func (n *Node) registerService() error {
 
 func (n *Node) nodeLogic() {
 	for {
+		n.mu.Lock()
+		defer n.mu.Unlock()
+
 		if !n.isLeader() {
 			if time.Since(n.lastHeartbeat) < heartbeatTimeout {
 				continue
@@ -125,7 +151,7 @@ func (n *Node) isLeader() bool {
 
 func (n *Node) TransmitHeartbeat() {
 	for _, peer := range n.peers {
-		reply, err := peer.RequestVote(context.Background(), &pb.Request{Sender: n.id, Term: n.term})
+		peer.RequestVote(context.Background(), &pb.Request{Sender: n.id, Term: n.term})
 
 	}
 
@@ -149,18 +175,7 @@ func (n *Node) callElection() {
 		fmt.Printf("Node %d has won its election\n", n.id)
 	}
 
-	// randomize
-	n.lastHeartbeat = time.Now().Add(time.Duration(rand.IntN(150)) * time.Millisecond)
-
-}
-
-func (n *Node) addPeer(id int32, address string) {
-	conn, err := grpc.NewClient(address, grpc.WithInsecure())
-	if err != nil {
-		fmt.Printf("Unable to connect to %s: %v\n", address, err)
-	}
-
-	n.peers[id] = pb.NewNodeClient(conn)
+	n.lastHeartbeat = time.Now()
 }
 
 ///////////////////////////////////////////////////////
@@ -168,11 +183,18 @@ func (n *Node) addPeer(id int32, address string) {
 ///////////////////////////////////////////////////////
 
 func (n *Node) InformArrival(_ context.Context, in *pb.NodeInfo) (*pb.Empty, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
 	n.addPeer(in.Id, in.Address)
+
 	return &pb.Empty{}, nil
 }
 
 func (n *Node) RequestVote(_ context.Context, in *pb.Request) (*pb.Reply, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
 	if n.term > in.Term {
 		fmt.Printf("%d: The request was bad. Got term: %d, expected term: %d\n", n.id, in.Term, n.term)
 		return &pb.Reply{Granted: true}, nil
@@ -191,6 +213,9 @@ func (n *Node) RequestVote(_ context.Context, in *pb.Request) (*pb.Reply, error)
 }
 
 func (n *Node) RequestAccess(_ context.Context, in *pb.Request) (*pb.Reply, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
 	if !n.isLeader() {
 		return &pb.Reply{Granted: false}, nil
 	}
