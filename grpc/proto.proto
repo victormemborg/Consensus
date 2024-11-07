@@ -12,7 +12,6 @@ service Node {
 message NodeInfo {
     int32 id = 1;
     string address = 2;
-    int32 term = 3;
 }
 
 message Request {
@@ -22,7 +21,6 @@ message Request {
 
 message Reply {
     bool granted = 1;
-    string message = 2;
 }
 
 message Empty {}

@@ -66,30 +66,41 @@ func (n *Node) start() {
 func (n *Node) nodeLogic() {
 	for {
 		if !n.isLeader() {
-			if time.Since(n.lastHeartbeat) > heartbeatTimeout {
-				fmt.Printf("%d is calling an election\n", n.id)
-				n.leader = -1
-				n.callElection()
+			if time.Since(n.lastHeartbeat) < heartbeatTimeout {
+				continue
 			}
-			continue
-		}
 
-		if time.Since(n.lastHeartbeat) > heartbeatInterval {
-			if rand.IntN(10) == 1 { // 1/10 chance of dying
+			fmt.Printf("%d is calling an election\n", n.id)
+			n.leader = -1
+			n.callElection()
+
+		} else {
+			if time.Since(n.lastHeartbeat) < heartbeatInterval {
+				continue
+			}
+
+			// 1/10 chance of dying
+			if rand.IntN(10) == 1 {
 				fmt.Printf("%d died\n", n.id)
 				return
 			}
-			// Transmit heartbeat
-			for _, peer := range n.peers {
-				peer.SendHeartbeat(context.Background(), &pb.NodeInfo{Id: n.id, Address: n.address, Term: n.term})
-			}
-			n.lastHeartbeat = time.Now()
+
+			n.TransmitHeartbeat()
 		}
 	}
 }
 
 func (n *Node) isLeader() bool {
 	return n.leader == n.id
+}
+
+func (n *Node) TransmitHeartbeat() {
+	for _, peer := range n.peers {
+		reply, err := peer.RequestVote(context.Background(), &pb.Request{Sender: n.id, Term: n.term})
+
+	}
+
+	n.lastHeartbeat = time.Now()
 }
 
 func (n *Node) callElection() {
@@ -115,38 +126,39 @@ func (n *Node) callElection() {
 }
 
 func (n *Node) RequestVote(_ context.Context, in *pb.Request) (*pb.Reply, error) {
-	if in.Term < n.term {
-		return &pb.Reply{Granted: false, Message: "Vote denied: Old term"}, nil
+	if n.term > in.Term {
+		fmt.Printf("%d: The request was bad. Got term: %d, expected term: %d\n", n.id, in.Term, n.term)
+		return &pb.Reply{Granted: true}, nil
 	}
-	if in.Sender < n.id {
-		return &pb.Reply{Granted: false, Message: "Vote denied: Lower id"}, nil
-	}
-	if in.Sender < n.votedFor {
-		return &pb.Reply{Granted: false, Message: "Vote denied: Lower id than other candidate"}, nil
+	if n.term == in.Term && n.leader > in.Sender {
+		fmt.Printf("%d: The request was bad. Got id: %d, expected id: %d\n", n.id, in.Sender, n.leader)
+		return &pb.Reply{Granted: true}, nil
 	}
 
+	n.leader = in.Sender
 	n.term = in.Term
-	n.votedFor = in.Sender
+	n.lastHeartbeat = time.Now()
+	fmt.Printf("%d: current term: %d\n", n.id, n.term)
 
-	return &pb.Reply{Granted: true, Message: "Vote granted"}, nil
+	return &pb.Reply{Granted: true}, nil
 }
 
-func (n *Node) SendHeartbeat(_ context.Context, in *pb.NodeInfo) (*pb.Empty, error) {
-	fmt.Printf("%d recieved a heartbeat from %d\n", n.id, in.Id)
+func (n *Node) SendHeartbeat(_ context.Context, in *pb.Request) (*pb.Empty, error) {
+	fmt.Printf("%d recieved a heartbeat from %d\n", n.id, in.Sender)
 
 	if n.term > in.Term {
 		// Bad leader. Ignore
 		fmt.Printf("%d: The leader was bad. Got term: %d, expected term: %d\n", n.id, in.Term, n.term)
 		return &pb.Empty{}, nil
 	}
-	if n.term == in.Term && n.leader > in.Id {
+	if n.term == in.Term && n.leader > in.Sender {
 		// Bad leader. Ignore
-		fmt.Printf("%d: The leader was bad. Got id: %d, expected id: %d\n", n.id, in.Id, n.leader)
+		fmt.Printf("%d: The leader was bad. Got id: %d, expected id: %d\n", n.id, in.Sender, n.leader)
 		return &pb.Empty{}, nil
 	}
 
 	n.isLeader = false
-	n.leader = in.Id
+	n.leader = in.Sender
 	n.term = in.Term
 	n.lastHeartbeat = time.Now()
 	fmt.Printf("%d: current term: %d\n", n.id, n.term)
@@ -162,7 +174,7 @@ func (n *Node) registerService() error {
 		n.addPeer(k, v)
 	}
 
-	info := &pb.NodeInfo{Id: n.id, Address: n.address, Term: n.term}
+	info := &pb.NodeInfo{Id: n.id, Address: n.address}
 
 	for _, peer := range n.peers {
 		_, err := peer.InformArrival(context.Background(), info)
