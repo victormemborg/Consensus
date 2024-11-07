@@ -117,11 +117,6 @@ func (n *Node) handleElection() {
 }
 
 func (n *Node) RequestVote(_ context.Context, in *pb.Request) (*pb.Reply, error) {
-	// if in.term < n.term -> false
-	// if in.id < n.id -> false
-	// if in.id < n.votedfor -> false
-	// else -> true + n.votedfor = in.id
-
 	if in.Term < n.term {
 		return &pb.Reply{Granted: false, Message: "Vote denied: Old term"}, nil
 	}
@@ -139,15 +134,16 @@ func (n *Node) RequestVote(_ context.Context, in *pb.Request) (*pb.Reply, error)
 }
 
 func (n *Node) SendHeartbeat(_ context.Context, in *pb.NodeInfo) (*pb.Empty, error) {
-	// if n.term > in.Term -> return
-	// if n.leader > in.Id -> return
-	// else -> n.leader = in.Id + n.term = in.Term
-
 	fmt.Printf("%d recieved a heartbeat from %d\n", n.id, in.Id)
 
-	if n.term > in.Term || n.leader > in.Id {
+	if n.term > in.Term {
 		// Bad leader. Ignore
-		fmt.Printf("%d: The leader was bad. Got: %d, expected: %d\n", n.id, in.Id, n.leader)
+		fmt.Printf("%d: The leader was bad. Got term: %d, expected term: %d\n", n.id, in.Term, n.term)
+		return &pb.Empty{}, nil
+	}
+	if n.term == in.Term && n.leader > in.Id {
+		// Bad leader. Ignore
+		fmt.Printf("%d: The leader was bad. Got id: %d, expected term: %d\n", n.id, in.Id, n.leader)
 		return &pb.Empty{}, nil
 	}
 
@@ -155,6 +151,7 @@ func (n *Node) SendHeartbeat(_ context.Context, in *pb.NodeInfo) (*pb.Empty, err
 	n.leader = in.Id
 	n.term = in.Term
 	n.lastHeartbeat = time.Now()
+	fmt.Printf("%d: current term: %d\n", n.id, n.term)
 
 	return &pb.Empty{}, nil
 }
