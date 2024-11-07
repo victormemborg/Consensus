@@ -19,9 +19,10 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Node_InformArrival_FullMethodName = "/Node/InformArrival"
-	Node_RequestVote_FullMethodName   = "/Node/RequestVote"
-	Node_RequestAccess_FullMethodName = "/Node/RequestAccess"
+	Node_InformArrival_FullMethodName     = "/Node/InformArrival"
+	Node_RequestVote_FullMethodName       = "/Node/RequestVote"
+	Node_TransmitHeartbeat_FullMethodName = "/Node/TransmitHeartbeat"
+	Node_RequestAccess_FullMethodName     = "/Node/RequestAccess"
 )
 
 // NodeClient is the client API for Node service.
@@ -30,6 +31,7 @@ const (
 type NodeClient interface {
 	InformArrival(ctx context.Context, in *NodeInfo, opts ...grpc.CallOption) (*Empty, error)
 	RequestVote(ctx context.Context, in *Request, opts ...grpc.CallOption) (*Reply, error)
+	TransmitHeartbeat(ctx context.Context, in *Request, opts ...grpc.CallOption) (*Empty, error)
 	RequestAccess(ctx context.Context, in *Request, opts ...grpc.CallOption) (*Reply, error)
 }
 
@@ -61,6 +63,16 @@ func (c *nodeClient) RequestVote(ctx context.Context, in *Request, opts ...grpc.
 	return out, nil
 }
 
+func (c *nodeClient) TransmitHeartbeat(ctx context.Context, in *Request, opts ...grpc.CallOption) (*Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Empty)
+	err := c.cc.Invoke(ctx, Node_TransmitHeartbeat_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *nodeClient) RequestAccess(ctx context.Context, in *Request, opts ...grpc.CallOption) (*Reply, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(Reply)
@@ -77,6 +89,7 @@ func (c *nodeClient) RequestAccess(ctx context.Context, in *Request, opts ...grp
 type NodeServer interface {
 	InformArrival(context.Context, *NodeInfo) (*Empty, error)
 	RequestVote(context.Context, *Request) (*Reply, error)
+	TransmitHeartbeat(context.Context, *Request) (*Empty, error)
 	RequestAccess(context.Context, *Request) (*Reply, error)
 	mustEmbedUnimplementedNodeServer()
 }
@@ -93,6 +106,9 @@ func (UnimplementedNodeServer) InformArrival(context.Context, *NodeInfo) (*Empty
 }
 func (UnimplementedNodeServer) RequestVote(context.Context, *Request) (*Reply, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RequestVote not implemented")
+}
+func (UnimplementedNodeServer) TransmitHeartbeat(context.Context, *Request) (*Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method TransmitHeartbeat not implemented")
 }
 func (UnimplementedNodeServer) RequestAccess(context.Context, *Request) (*Reply, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RequestAccess not implemented")
@@ -154,6 +170,24 @@ func _Node_RequestVote_Handler(srv interface{}, ctx context.Context, dec func(in
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Node_TransmitHeartbeat_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Request)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServer).TransmitHeartbeat(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Node_TransmitHeartbeat_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServer).TransmitHeartbeat(ctx, req.(*Request))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Node_RequestAccess_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(Request)
 	if err := dec(in); err != nil {
@@ -186,6 +220,10 @@ var Node_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RequestVote",
 			Handler:    _Node_RequestVote_Handler,
+		},
+		{
+			MethodName: "TransmitHeartbeat",
+			Handler:    _Node_TransmitHeartbeat_Handler,
 		},
 		{
 			MethodName: "RequestAccess",

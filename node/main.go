@@ -41,6 +41,7 @@ type Node struct {
 	leader        int32
 	term          int32
 	lastHeartbeat time.Time
+	isDead        bool
 }
 
 func NewNode(id int32, address string) *Node {
@@ -51,6 +52,7 @@ func NewNode(id int32, address string) *Node {
 		leader:        -1, // no leader when starting
 		term:          0,
 		lastHeartbeat: time.Now().Add(time.Duration(rand.IntN(150)) * time.Millisecond),
+		isDead:        false,
 	}
 }
 
@@ -100,9 +102,6 @@ func (n *Node) registerService() error {
 }
 
 func (n *Node) addPeer(id int32, address string) {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-
 	conn, err := grpc.NewClient(address, grpc.WithInsecure())
 	if err != nil {
 		fmt.Printf("Unable to connect to %s: %v\n", address, err)
@@ -117,16 +116,12 @@ func (n *Node) addPeer(id int32, address string) {
 
 func (n *Node) nodeLogic() {
 	for {
-		n.mu.Lock()
-		defer n.mu.Unlock()
-
 		if !n.isLeader() {
 			if time.Since(n.lastHeartbeat) < heartbeatTimeout {
 				continue
 			}
 
 			fmt.Printf("%d is calling an election\n", n.id)
-			n.leader = -1
 			n.callElection()
 			continue
 		}
@@ -137,11 +132,17 @@ func (n *Node) nodeLogic() {
 
 		// 1/10 chance of dying
 		if rand.IntN(10) == 1 {
+			n.isDead = true
 			fmt.Printf("%d died\n", n.id)
 			return
 		}
 
-		n.TransmitHeartbeat()
+		// Send heartbeat
+		for _, peer := range n.peers {
+			peer.TransmitHeartbeat(context.Background(), &pb.Request{Sender: n.id, Term: n.term})
+		}
+
+		n.lastHeartbeat = time.Now()
 	}
 }
 
@@ -149,18 +150,10 @@ func (n *Node) isLeader() bool {
 	return n.leader == n.id
 }
 
-func (n *Node) TransmitHeartbeat() {
-	for _, peer := range n.peers {
-		peer.RequestVote(context.Background(), &pb.Request{Sender: n.id, Term: n.term})
-
-	}
-
-	n.lastHeartbeat = time.Now()
-}
-
 func (n *Node) callElection() {
 	majority := len(n.peers)/2 + 1
 	nVotes := 1 // votes for self as leader
+	n.leader = -1
 	n.term++
 
 	for _, peer := range n.peers {
@@ -183,39 +176,53 @@ func (n *Node) callElection() {
 ///////////////////////////////////////////////////////
 
 func (n *Node) InformArrival(_ context.Context, in *pb.NodeInfo) (*pb.Empty, error) {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-
 	n.addPeer(in.Id, in.Address)
-
 	return &pb.Empty{}, nil
 }
 
 func (n *Node) RequestVote(_ context.Context, in *pb.Request) (*pb.Reply, error) {
-	n.mu.Lock()
-	defer n.mu.Unlock()
+	if n.isDead {
+		return &pb.Reply{Granted: false}, nil
+	}
 
 	if n.term > in.Term {
 		fmt.Printf("%d: The request was bad. Got term: %d, expected term: %d\n", n.id, in.Term, n.term)
-		return &pb.Reply{Granted: true}, nil
+		return &pb.Reply{Granted: false}, nil
 	}
-	if n.term == in.Term && n.leader > in.Sender {
-		fmt.Printf("%d: The request was bad. Got id: %d, expected id: %d\n", n.id, in.Sender, n.leader)
-		return &pb.Reply{Granted: true}, nil
+	if n.term == in.Term && n.leader != -1 {
+		fmt.Printf("%d: The request was bad. Already has leader %d in this term %d\n", n.id, n.leader, n.term)
+		return &pb.Reply{Granted: false}, nil
 	}
 
 	n.leader = in.Sender
 	n.term = in.Term
 	n.lastHeartbeat = time.Now()
-	fmt.Printf("%d: current term: %d\n", n.id, n.term)
+
+	fmt.Printf("%d: has granted a vote to %d in term %d\n", n.id, in.Sender, n.term)
 
 	return &pb.Reply{Granted: true}, nil
 }
 
-func (n *Node) RequestAccess(_ context.Context, in *pb.Request) (*pb.Reply, error) {
-	n.mu.Lock()
-	defer n.mu.Unlock()
+func (n *Node) TransmitHeartbeat(_ context.Context, in *pb.Request) (*pb.Empty, error) {
+	if n.isDead {
+		return &pb.Empty{}, nil
+	}
 
+	if n.term > in.Term {
+		fmt.Printf("%d: The heartbeat was bad. Got term: %d, expected term: %d\n", n.id, in.Term, n.term)
+		return &pb.Empty{}, nil
+	}
+
+	n.leader = in.Sender
+	n.term = in.Term
+	n.lastHeartbeat = time.Now()
+
+	fmt.Printf("%d: has recieved heartbeat from %d in term %d\n", n.id, in.Sender, n.term)
+
+	return &pb.Empty{}, nil
+}
+
+func (n *Node) RequestAccess(_ context.Context, in *pb.Request) (*pb.Reply, error) {
 	if !n.isLeader() {
 		return &pb.Reply{Granted: false}, nil
 	}

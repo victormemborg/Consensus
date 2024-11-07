@@ -4,6 +4,7 @@ option go_package = "github.com/victormemborg/Consensus/grpc";
 service Node {
     rpc InformArrival (NodeInfo) returns (Empty);
     rpc RequestVote (Request) returns (Reply);
+    rpc TransmitHeartbeat (Request) returns (Empty);
     rpc RequestAccess (Request) returns (Reply);
 }
 
