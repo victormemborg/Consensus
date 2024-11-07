@@ -17,8 +17,8 @@ var (
 	csMutex           = sync.Mutex{}         // mutex for critical section
 	csRequest         = []int32{}            // queue of requests for critical section
 	csUsed            = false                // if critical section is in use
-	heartbeatTimeout  = 10 * time.Second     // seconds between heartbeats
-	heartbeatInterval = 1 * time.Second
+	heartbeatTimeout  = 4 * time.Second      // max allowed interval between heartbeats
+	heartbeatInterval = 1 * time.Second      // cooldown between heartbeats
 )
 
 type ServiceRegistry struct {
@@ -41,6 +41,7 @@ type Node struct {
 	leader        int32
 	term          int32
 	lastHeartbeat time.Time
+	lastElection  time.Time
 	isDead        bool // Gotta figure out how to actually stop the server
 }
 
@@ -52,6 +53,7 @@ func NewNode(id int32, address string) *Node {
 		leader:        -1, // no leader when starting
 		term:          0,
 		lastHeartbeat: time.Now().Add(time.Duration(rand.IntN(150)) * time.Millisecond),
+		lastElection:  time.Now(),
 		isDead:        false,
 	}
 }
@@ -121,7 +123,6 @@ func (n *Node) nodeLogic() {
 				continue
 			}
 
-			fmt.Printf("%d is calling an election in term %d\n", n.id, n.term)
 			n.callElection()
 			continue
 		}
@@ -151,10 +152,15 @@ func (n *Node) isLeader() bool {
 }
 
 func (n *Node) callElection() {
+	//n.mu.Lock()
+	//defer n.mu.Unlock()
+
 	majority := len(n.peers)/2 + 1
 	nVotes := 1 // votes for self as leader
 	n.leader = -1
 	n.term++
+
+	fmt.Printf("%d is calling an election in term %d\n", n.id, n.term)
 
 	for _, peer := range n.peers {
 		reply, err := peer.RequestVote(context.Background(), &pb.Request{Sender: n.id, Term: n.term})
@@ -166,6 +172,8 @@ func (n *Node) callElection() {
 	if nVotes >= majority {
 		n.leader = n.id
 		fmt.Printf("Node %d has won its election in term %d\n", n.id, n.term)
+	} else {
+		fmt.Printf("Node %d has lost its election in term %d\n", n.id, n.term)
 	}
 
 	n.lastHeartbeat = time.Now()
@@ -181,6 +189,9 @@ func (n *Node) InformArrival(_ context.Context, in *pb.NodeInfo) (*pb.Empty, err
 }
 
 func (n *Node) RequestVote(_ context.Context, in *pb.Request) (*pb.Reply, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
 	if n.isDead {
 		return &pb.Reply{Granted: false}, nil
 	}
@@ -207,10 +218,12 @@ func (n *Node) TransmitHeartbeat(_ context.Context, in *pb.Request) (*pb.Empty, 
 	if n.isDead {
 		return &pb.Empty{}, nil
 	}
-
 	if n.term > in.Term {
 		fmt.Printf("%d: The heartbeat was bad. Got term: %d, expected term: %d\n", n.id, in.Term, n.term)
 		return &pb.Empty{}, nil
+	}
+	if n.term == in.Term && n.leader != in.Sender {
+		fmt.Printf("ERROR: There are 2 or more leaders in same term %d, expected %d\n", in.Sender, n.leader)
 	}
 
 	n.leader = in.Sender
@@ -246,8 +259,8 @@ func main() {
 	n1 := NewNode(1, ":50051")
 	n2 := NewNode(2, ":50052")
 	n3 := NewNode(3, ":50053")
-	n4 := NewNode(3, ":50054")
-	n5 := NewNode(3, ":50055")
+	//n4 := NewNode(4, ":50054")
+	//n5 := NewNode(5, ":50055")
 
 	wg := sync.WaitGroup{}
 	wg.Add(1)
@@ -255,8 +268,8 @@ func main() {
 	go n1.start()
 	go n2.start()
 	go n3.start()
-	go n4.start()
-	go n5.start()
+	//go n4.start()
+	//go n5.start()
 
 	time.Sleep(2 * time.Second) // we need to wait for the nodes to start
 	wg.Wait()
