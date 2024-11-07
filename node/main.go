@@ -43,6 +43,10 @@ func NewNode(id int32, address string) *Node {
 	}
 }
 
+///////////////////////////////////////////////////////
+//                    Networking                     //
+///////////////////////////////////////////////////////
+
 func (n *Node) start() {
 	grpcServer := grpc.NewServer()
 	listener, err := net.Listen("tcp", n.address)
@@ -63,6 +67,31 @@ func (n *Node) start() {
 	}
 }
 
+func (n *Node) registerService() error {
+	registryMutex.Lock()
+	defer registryMutex.Unlock()
+
+	for k, v := range serviceRegistry {
+		n.addPeer(k, v)
+	}
+
+	info := &pb.NodeInfo{Id: n.id, Address: n.address}
+
+	for _, peer := range n.peers {
+		_, err := peer.InformArrival(context.Background(), info)
+		if err != nil {
+			fmt.Printf("failed to inform of arrival %v\n", err)
+		}
+	}
+
+	serviceRegistry[n.id] = n.address
+	return nil
+}
+
+///////////////////////////////////////////////////////
+//                       Logic                       //
+///////////////////////////////////////////////////////
+
 func (n *Node) nodeLogic() {
 	for {
 		if !n.isLeader() {
@@ -73,20 +102,20 @@ func (n *Node) nodeLogic() {
 			fmt.Printf("%d is calling an election\n", n.id)
 			n.leader = -1
 			n.callElection()
-
-		} else {
-			if time.Since(n.lastHeartbeat) < heartbeatInterval {
-				continue
-			}
-
-			// 1/10 chance of dying
-			if rand.IntN(10) == 1 {
-				fmt.Printf("%d died\n", n.id)
-				return
-			}
-
-			n.TransmitHeartbeat()
+			continue
 		}
+
+		if time.Since(n.lastHeartbeat) < heartbeatInterval {
+			continue
+		}
+
+		// 1/10 chance of dying
+		if rand.IntN(10) == 1 {
+			fmt.Printf("%d died\n", n.id)
+			return
+		}
+
+		n.TransmitHeartbeat()
 	}
 }
 
@@ -125,6 +154,24 @@ func (n *Node) callElection() {
 
 }
 
+func (n *Node) addPeer(id int32, address string) {
+	conn, err := grpc.NewClient(address, grpc.WithInsecure())
+	if err != nil {
+		fmt.Printf("Unable to connect to %s: %v\n", address, err)
+	}
+
+	n.peers[id] = pb.NewNodeClient(conn)
+}
+
+///////////////////////////////////////////////////////
+//                rpc-implementations                //
+///////////////////////////////////////////////////////
+
+func (n *Node) InformArrival(_ context.Context, in *pb.NodeInfo) (*pb.Empty, error) {
+	n.addPeer(in.Id, in.Address)
+	return &pb.Empty{}, nil
+}
+
 func (n *Node) RequestVote(_ context.Context, in *pb.Request) (*pb.Reply, error) {
 	if n.term > in.Term {
 		fmt.Printf("%d: The request was bad. Got term: %d, expected term: %d\n", n.id, in.Term, n.term)
@@ -143,58 +190,25 @@ func (n *Node) RequestVote(_ context.Context, in *pb.Request) (*pb.Reply, error)
 	return &pb.Reply{Granted: true}, nil
 }
 
-func (n *Node) SendHeartbeat(_ context.Context, in *pb.Request) (*pb.Empty, error) {
-	fmt.Printf("%d recieved a heartbeat from %d\n", n.id, in.Sender)
-
-	if n.term > in.Term {
-		// Bad leader. Ignore
-		fmt.Printf("%d: The leader was bad. Got term: %d, expected term: %d\n", n.id, in.Term, n.term)
-		return &pb.Empty{}, nil
+func (n *Node) RequestAccess(_ context.Context, in *pb.Request) (*pb.Reply, error) {
+	if !n.isLeader() {
+		return &pb.Reply{Granted: false}, nil
 	}
-	if n.term == in.Term && n.leader > in.Sender {
-		// Bad leader. Ignore
-		fmt.Printf("%d: The leader was bad. Got id: %d, expected id: %d\n", n.id, in.Sender, n.leader)
-		return &pb.Empty{}, nil
+	if csUsed {
+		csRequest = append(csRequest, in.Sender) // add node to queue
+		return &pb.Reply{Granted: false}, nil
 	}
 
-	n.isLeader = false
-	n.leader = in.Sender
-	n.term = in.Term
-	n.lastHeartbeat = time.Now()
-	fmt.Printf("%d: current term: %d\n", n.id, n.term)
-
-	return &pb.Empty{}, nil
+	csMutex.Lock()
+	csUsed = true
+	fmt.Println("CS is now in use")
+	csMutex.Unlock()
+	return &pb.Reply{Granted: true}, nil
 }
 
-func (n *Node) registerService() error {
-	registryMutex.Lock()
-	defer registryMutex.Unlock()
-
-	for k, v := range serviceRegistry {
-		n.addPeer(k, v)
-	}
-
-	info := &pb.NodeInfo{Id: n.id, Address: n.address}
-
-	for _, peer := range n.peers {
-		_, err := peer.InformArrival(context.Background(), info)
-		if err != nil {
-			fmt.Printf("failed to inform of arrival %v\n", err)
-		}
-	}
-
-	serviceRegistry[n.id] = n.address
-	return nil
-}
-
-func (n *Node) addPeer(id int32, address string) {
-	conn, err := grpc.NewClient(address, grpc.WithInsecure())
-	if err != nil {
-		fmt.Printf("Unable to connect to %s: %v\n", address, err)
-	}
-
-	n.peers[id] = pb.NewNodeClient(conn)
-}
+///////////////////////////////////////////////////////
+//                       Main                        //
+///////////////////////////////////////////////////////
 
 func main() {
 	n1 := NewNode(1, ":50051")
@@ -210,30 +224,4 @@ func main() {
 
 	time.Sleep(2 * time.Second) // we need to wait for the nodes to start
 	wg.Wait()
-}
-
-func (n *Node) InformArrival(_ context.Context, in *pb.NodeInfo) (*pb.Empty, error) {
-	n.addPeer(in.Id, in.Address)
-	return &pb.Empty{}, nil
-}
-
-func (n *Node) ElectLeader(_ context.Context, in *pb.Request) (*pb.Reply, error) {
-	fmt.Printf("%d modtog en besked fra %d\n", n.id, in.Sender)
-	return &pb.Reply{Granted: true, Message: ""}, nil
-}
-
-func (n *Node) RequestAccess(_ context.Context, in *pb.NodeInfo) (*pb.Reply, error) {
-	if !n.isLeader {
-		return &pb.Reply{Granted: false, Message: "Node is not the leader"}, nil
-	}
-	if csUsed {
-		csRequest = append(csRequest, in.Id) // add node to queue
-		return &pb.Reply{Granted: false, Message: "CS is already in use"}, nil
-	}
-
-	csMutex.Lock()
-	csUsed = true
-	fmt.Println("CS is now in use")
-	csMutex.Unlock()
-	return &pb.Reply{Granted: true, Message: "granted access"}, nil
 }
