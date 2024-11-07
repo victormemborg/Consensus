@@ -27,11 +27,9 @@ type Node struct {
 	id            int32
 	address       string
 	peers         map[int32]pb.NodeClient // id -> client
-	isLeader      bool                    //leader, follower, candidate
 	leader        int32
 	term          int32
 	lastHeartbeat time.Time
-	votedFor      int32 //used to keep track of who the node voted for
 }
 
 func NewNode(id int32, address string) *Node {
@@ -39,9 +37,7 @@ func NewNode(id int32, address string) *Node {
 		id:            id,
 		address:       address,
 		peers:         make(map[int32]pb.NodeClient),
-		isLeader:      false,
 		leader:        -1, // no leader when starting
-		votedFor:      -1, // no vote when starting
 		term:          0,
 		lastHeartbeat: time.Now(),
 	}
@@ -69,49 +65,51 @@ func (n *Node) start() {
 
 func (n *Node) nodeLogic() {
 	for {
-		if !n.isLeader {
+		if !n.isLeader() {
 			if time.Since(n.lastHeartbeat) > heartbeatTimeout {
 				fmt.Printf("%d is calling an election\n", n.id)
 				n.leader = -1
-				n.handleElection()
+				n.callElection()
 			}
-		} else {
-			if time.Since(n.lastHeartbeat) > heartbeatInterval {
-				if rand.IntN(10) == 1 { // 1/10 chance of dying
-					fmt.Printf("%d died\n", n.id)
-					return
-				}
-				// Transmit heartbeat
-				for _, peer := range n.peers {
-					peer.SendHeartbeat(context.Background(), &pb.NodeInfo{Id: n.id, Address: n.address, Term: n.term})
-				}
-				n.lastHeartbeat = time.Now()
+			continue
+		}
+
+		if time.Since(n.lastHeartbeat) > heartbeatInterval {
+			if rand.IntN(10) == 1 { // 1/10 chance of dying
+				fmt.Printf("%d died\n", n.id)
+				return
 			}
+			// Transmit heartbeat
+			for _, peer := range n.peers {
+				peer.SendHeartbeat(context.Background(), &pb.NodeInfo{Id: n.id, Address: n.address, Term: n.term})
+			}
+			n.lastHeartbeat = time.Now()
 		}
 	}
 }
 
-func (n *Node) handleElection() {
+func (n *Node) isLeader() bool {
+	return n.leader == n.id
+}
+
+func (n *Node) callElection() {
 	majority := len(n.peers)/2 + 1
 	nVotes := 1 // votes for self as leader
 	n.term++
-	n.votedFor = n.id // vote for self
 
-	for peerId, peer := range n.peers {
-		if n.id > peerId {
-			reply, err := peer.RequestVote(context.Background(), &pb.Request{Sender: n.id, Term: n.term})
-			if reply.Granted && err == nil {
-				nVotes++
-			}
+	for _, peer := range n.peers {
+		reply, err := peer.RequestVote(context.Background(), &pb.Request{Sender: n.id, Term: n.term})
+		if reply.Granted && err == nil {
+			nVotes++
 		}
 	}
+
 	if nVotes >= majority {
-		n.isLeader = true
 		n.leader = n.id
-		fmt.Printf("Node %d is the new leader\n", n.id)
-		// broadcast new leader
+		fmt.Printf("Node %d has won its election\n", n.id)
 	}
-	// randomize election timeout
+
+	// randomize
 	n.lastHeartbeat = time.Now().Add(time.Duration(rand.IntN(150)) * time.Millisecond)
 
 }
@@ -143,7 +141,7 @@ func (n *Node) SendHeartbeat(_ context.Context, in *pb.NodeInfo) (*pb.Empty, err
 	}
 	if n.term == in.Term && n.leader > in.Id {
 		// Bad leader. Ignore
-		fmt.Printf("%d: The leader was bad. Got id: %d, expected term: %d\n", n.id, in.Id, n.leader)
+		fmt.Printf("%d: The leader was bad. Got id: %d, expected id: %d\n", n.id, in.Id, n.leader)
 		return &pb.Empty{}, nil
 	}
 
