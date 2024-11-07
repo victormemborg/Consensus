@@ -152,22 +152,26 @@ func (n *Node) isLeader() bool {
 }
 
 func (n *Node) callElection() {
-	//n.mu.Lock()
-	//defer n.mu.Unlock()
+	n.mu.Lock()
 
 	majority := len(n.peers)/2 + 1
 	nVotes := 1 // votes for self as leader
 	n.leader = -1
 	n.term++
 
+	req := &pb.Request{Sender: n.id, Term: n.term}
 	fmt.Printf("%d is calling an election in term %d\n", n.id, n.term)
 
+	n.mu.Unlock()
+
 	for _, peer := range n.peers {
-		reply, err := peer.RequestVote(context.Background(), &pb.Request{Sender: n.id, Term: n.term})
+		reply, err := peer.RequestVote(context.Background(), req)
 		if reply.Granted && err == nil {
 			nVotes++
 		}
 	}
+
+	n.mu.Lock()
 
 	if nVotes >= majority {
 		n.leader = n.id
@@ -177,6 +181,8 @@ func (n *Node) callElection() {
 	}
 
 	n.lastHeartbeat = time.Now()
+
+	n.mu.Unlock()
 }
 
 ///////////////////////////////////////////////////////
