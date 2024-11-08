@@ -13,12 +13,13 @@ import (
 )
 
 var (
-	serviceReg        = NewServiceRegistry() // service registry for discovery
-	csMutex           = sync.Mutex{}         // mutex for critical section
-	csRequest         = []int32{}            // queue of requests for critical section
-	csUsed            = false                // if critical section is in use
-	heartbeatTimeout  = 4 * time.Second      // max allowed interval between heartbeats
-	heartbeatInterval = 1 * time.Second      // cooldown between heartbeats
+	serviceReg        = NewServiceRegistry()   // service registry for discovery
+	csMutex           = sync.Mutex{}           // mutex for critical section
+	csRequest         = []int32{}              // queue of requests for critical section
+	csUsed            = false                  // if critical section is in use
+	heartbeatTimeout  = 4 * time.Second        // max allowed interval between heartbeats
+	heartbeatInterval = 1 * time.Second        // cooldown between heartbeats
+	rpcTimeout        = 200 * time.Millisecond // timeouts for rpc-calls using context.withTimeout()
 )
 
 type ServiceRegistry struct {
@@ -41,7 +42,6 @@ type Node struct {
 	leader        int32
 	term          int32
 	lastHeartbeat time.Time
-	lastElection  time.Time
 	isDead        bool // Gotta figure out how to actually stop the server
 }
 
@@ -52,10 +52,13 @@ func NewNode(id int32, address string) *Node {
 		peers:         make(map[int32]pb.NodeClient),
 		leader:        -1, // no leader when starting
 		term:          0,
-		lastHeartbeat: time.Now().Add(time.Duration(rand.IntN(150)) * time.Millisecond),
-		lastElection:  time.Now(),
+		lastHeartbeat: nowWithDeviation(),
 		isDead:        false,
 	}
+}
+
+func nowWithDeviation() time.Time {
+	return time.Now().Add(time.Duration(rand.IntN(150)) * time.Millisecond)
 }
 
 ///////////////////////////////////////////////////////
@@ -158,12 +161,12 @@ func (n *Node) callElection() {
 	fmt.Printf("%d is calling an election in term %d\n", n.id, n.term+1)
 
 	majority := len(n.peers)/2 + 1
-	nVotes := 1 // votes for self as leader
-	n.leader = n.id
+	nVotes := 1   // votes for self as leader
+	n.leader = -1 // no longer has a leader
 	n.term++
 
 	req := &pb.Request{Sender: n.id, Term: n.term}
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), rpcTimeout)
 	defer cancel()
 
 	for _, peer := range n.peers {
@@ -174,9 +177,9 @@ func (n *Node) callElection() {
 	}
 
 	if nVotes >= majority {
+		n.leader = n.id
 		fmt.Printf("Node %d has won its election in term %d\n", n.id, n.term)
 	} else {
-		n.leader = -1
 		fmt.Printf("Node %d has lost its election in term %d\n", n.id, n.term)
 	}
 
