@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"net"
+	"strconv"
 	"sync"
 	"time"
 
@@ -13,13 +14,14 @@ import (
 )
 
 var (
-	serviceReg        = NewServiceRegistry()   // service registry for discovery
-	csMutex           = sync.Mutex{}           // mutex for critical section
-	csRequest         = []int32{}              // queue of requests for critical section
-	csUsed            = false                  // if critical section is in use
-	heartbeatTimeout  = 4 * time.Second        // max allowed interval between heartbeats
-	heartbeatInterval = 1 * time.Second        // cooldown between heartbeats
-	rpcTimeout        = 200 * time.Millisecond // timeouts for rpc-calls using context.withTimeout()
+	serviceReg         = NewServiceRegistry()   // service registry for discovery
+	csMutex            = sync.Mutex{}           // mutex for critical section
+	csRequest          = []int32{}              // queue of requests for critical section
+	csUsed             = false                  // if critical section is in use
+	heartbeatTimeout   = 4 * time.Second        // max allowed interval between heartbeats
+	heartbeatInterval  = 1 * time.Second        // cooldown between heartbeats
+	rpcTimeout         = 200 * time.Millisecond // timeouts for rpc-calls using context.withTimeout()
+	randDeviationBound = 150                    // upper bound for random time deviation used in nowWithDeviation() (ms)
 )
 
 type ServiceRegistry struct {
@@ -58,7 +60,8 @@ func NewNode(id int32, address string) *Node {
 }
 
 func nowWithDeviation() time.Time {
-	return time.Now().Add(time.Duration(rand.IntN(150)) * time.Millisecond)
+	nanoSeconds := rand.IntN(randDeviationBound) * 1000000
+	return time.Now().Add(time.Duration(nanoSeconds))
 }
 
 ///////////////////////////////////////////////////////
@@ -122,11 +125,9 @@ func (n *Node) addPeer(id int32, address string) {
 func (n *Node) nodeLogic() {
 	for {
 		if !n.isLeader() {
-			if time.Since(n.lastHeartbeat) < heartbeatTimeout {
-				continue
+			if time.Since(n.lastHeartbeat) > heartbeatTimeout {
+				n.callElection()
 			}
-
-			n.callElection()
 			continue
 		}
 
@@ -146,7 +147,7 @@ func (n *Node) nodeLogic() {
 			peer.TransmitHeartbeat(context.Background(), &pb.Request{Sender: n.id, Term: n.term})
 		}
 
-		n.lastHeartbeat = time.Now()
+		n.lastHeartbeat = nowWithDeviation()
 	}
 }
 
@@ -183,7 +184,7 @@ func (n *Node) callElection() {
 		fmt.Printf("Node %d has lost its election in term %d\n", n.id, n.term)
 	}
 
-	n.lastHeartbeat = time.Now()
+	n.lastHeartbeat = nowWithDeviation()
 }
 
 ///////////////////////////////////////////////////////
@@ -208,13 +209,13 @@ func (n *Node) RequestVote(_ context.Context, in *pb.Request) (*pb.Reply, error)
 		return &pb.Reply{Granted: false}, nil
 	}
 	if n.term == in.Term && n.leader != -1 {
-		fmt.Printf("%d: Request from %d is bad. Already has leader %d in this term %d\n", n.id, in.Sender, n.leader, n.term)
+		fmt.Printf("%d: Request from %d is bad. Already voted %d in this term %d\n", n.id, in.Sender, n.leader, n.term)
 		return &pb.Reply{Granted: false}, nil
 	}
 
 	n.leader = in.Sender
 	n.term = in.Term
-	n.lastHeartbeat = time.Now()
+	n.lastHeartbeat = nowWithDeviation()
 
 	fmt.Printf("%d: has granted a vote to %d in term %d\n", n.id, in.Sender, n.term)
 
@@ -232,13 +233,10 @@ func (n *Node) TransmitHeartbeat(_ context.Context, in *pb.Request) (*pb.Empty, 
 		fmt.Printf("%d: The heartbeat was bad. Got term: %d, expected term: %d\n", n.id, in.Term, n.term)
 		return &pb.Empty{}, nil
 	}
-	if n.term == in.Term && n.leader != in.Sender {
-		fmt.Printf("ERROR: There are 2 or more leaders in same term %d, expected %d\n", in.Sender, n.leader)
-	}
 
 	n.leader = in.Sender
 	n.term = in.Term
-	n.lastHeartbeat = time.Now()
+	n.lastHeartbeat = nowWithDeviation()
 
 	fmt.Printf("%d: has recieved heartbeat from %d in term %d\n", n.id, in.Sender, n.term)
 
@@ -266,20 +264,20 @@ func (n *Node) RequestAccess(_ context.Context, in *pb.Request) (*pb.Reply, erro
 ///////////////////////////////////////////////////////
 
 func main() {
-	n1 := NewNode(1, ":50051")
-	n2 := NewNode(2, ":50052")
-	n3 := NewNode(3, ":50053")
-	n4 := NewNode(4, ":50054")
-	n5 := NewNode(5, ":50055")
+	nNodes := 5
+	nodeArray := make([]*Node, nNodes)
+
+	for i := 0; i < nNodes; i++ {
+		port := 50051 + i
+		nodeArray[i] = NewNode(int32(i), ":"+strconv.Itoa(port))
+	}
 
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 
-	go n1.start()
-	go n2.start()
-	go n3.start()
-	go n4.start()
-	go n5.start()
+	for i := 0; i < nNodes; i++ {
+		go nodeArray[i].start()
+	}
 
 	time.Sleep(2 * time.Second) // we need to wait for the nodes to start
 	wg.Wait()
