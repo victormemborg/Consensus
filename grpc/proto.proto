@@ -3,16 +3,14 @@ option go_package = "github.com/victormemborg/Consensus/grpc";
 
 service Node {
     rpc InformArrival (NodeInfo) returns (Empty);
-    rpc ElectLeader (Request) returns (Reply);
-    rpc RequestAccess (NodeInfo) returns (Reply);
-    rpc SendHeartbeat (NodeInfo) returns (Empty);
     rpc RequestVote (Request) returns (Reply);
+    rpc TransmitHeartbeat (Request) returns (Empty);
+    rpc RequestAccess (Request) returns (Reply);
 }
 
 message NodeInfo {
     int32 id = 1;
     string address = 2;
-    int32 term = 3;
 }
 
 message Request {
@@ -22,7 +20,6 @@ message Request {
 
 message Reply {
     bool granted = 1;
-    string message = 2;
 }
 
 message Empty {}
