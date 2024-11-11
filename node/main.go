@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"math/rand/v2"
 	"net"
+	"os"
 	"strconv"
 	"sync"
 	"time"
@@ -72,6 +74,14 @@ type Node struct {
 	lastCSAccess  time.Time
 }
 
+func setLog() {
+	f, err := os.OpenFile("logs.log", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+	if err != nil {
+		log.Fatalf("error opening file: %v", err)
+	}
+	log.SetOutput(f)
+}
+
 func NewNode(id int32, address string) *Node {
 	return &Node{
 		id:            id,
@@ -97,6 +107,7 @@ func nowWithDeviation() time.Time {
 ///////////////////////////////////////////////////////
 
 func (n *Node) start() {
+	setLog()
 	grpcServer := grpc.NewServer()
 	listener, err := net.Listen("tcp", n.address)
 	if err != nil {
@@ -169,7 +180,6 @@ func (n *Node) nodeLogic(srv *grpc.Server) {
 		}
 
 		if time.Since(n.lastCSAccess) > accessTimeout {
-			fmt.Printf("%d: Resource access timed out\n", n.id)
 			n.csIsUsedBy = -1
 		}
 
@@ -184,7 +194,7 @@ func (n *Node) nodeLogic(srv *grpc.Server) {
 
 		// 1/10 chance of dying
 		if rand.IntN(10) == 1 {
-			fmt.Printf("%d died\n", n.id)
+			log.Printf("%d died\n", n.id)
 			srv.Stop()
 			n.mu.Unlock()
 			return
@@ -258,7 +268,7 @@ func (n *Node) heartbeat() {
 }
 
 func (n *Node) callElection() {
-	fmt.Printf("%d is calling an election in term %d\n", n.id, n.term+1)
+	log.Printf("%d is calling an election in term %d\n", n.id, n.term+1)
 
 	majority := len(n.peers)/2 + 1
 	nVotes := 1   // votes for self as leader
@@ -278,18 +288,18 @@ func (n *Node) callElection() {
 
 	if nVotes >= majority {
 		n.leader = n.id
-		fmt.Printf("Node %d has won its election in term %d\n", n.id, n.term)
+		log.Printf("Node %d has won its election in term %d\n", n.id, n.term)
 	} else {
-		fmt.Printf("Node %d has lost its election in term %d\n", n.id, n.term)
+		log.Printf("Node %d has lost its election in term %d\n", n.id, n.term)
 	}
 
 	n.lastHeartbeat = nowWithDeviation()
 }
 
 func (n *Node) holdResource() {
-	fmt.Printf("%d: Im using the critical resource!!\n", n.id)
+	log.Printf("%d: Im using the critical resource!!\n", n.id)
 	time.Sleep(accessDuration)
-	fmt.Printf("%d: I have released the critical resource!!\n", n.id)
+	log.Printf("%d: I have released the critical resource!!\n", n.id)
 
 	for {
 		n.mu.Lock()
@@ -302,7 +312,6 @@ func (n *Node) holdResource() {
 			n.mu.Unlock()
 			break
 		}
-		fmt.Printf("%d: Failed to inform release, retrying...\n", n.id)
 		n.mu.Unlock()
 
 		time.Sleep(500 * time.Millisecond) // wait before retrying
@@ -323,19 +332,15 @@ func (n *Node) RequestVote(_ context.Context, in *pb.Request) (*pb.Reply, error)
 	defer n.mu.Unlock()
 
 	if n.term > in.Term {
-		fmt.Printf("%d: Request from %d is bad. Got term: %d, expected term: %d\n", n.id, in.Sender, in.Term, n.term)
 		return &pb.Reply{Granted: false}, nil
 	}
 	if n.term == in.Term && n.leader != -1 {
-		fmt.Printf("%d: Request from %d is bad. Already voted %d in this term %d\n", n.id, in.Sender, n.leader, n.term)
 		return &pb.Reply{Granted: false}, nil
 	}
 
 	n.leader = in.Sender
 	n.term = in.Term
 	n.lastHeartbeat = nowWithDeviation()
-
-	fmt.Printf("%d: has granted a vote to %d in term %d\n", n.id, in.Sender, n.term)
 
 	return &pb.Reply{Granted: true}, nil
 }
@@ -345,7 +350,6 @@ func (n *Node) TransmitHeartbeat(_ context.Context, in *pb.HeartBeat) (*pb.Reply
 	defer n.mu.Unlock()
 
 	if n.term > in.Term {
-		fmt.Printf("%d: The heartbeat was bad. Got term: %d, expected term: %d\n", n.id, in.Term, n.term)
 		return &pb.Reply{Granted: false}, nil
 	}
 
@@ -354,8 +358,6 @@ func (n *Node) TransmitHeartbeat(_ context.Context, in *pb.HeartBeat) (*pb.Reply
 	n.csQueue.items = in.Queue
 	n.csIsUsedBy = in.CsIsUsedBy
 	n.lastHeartbeat = nowWithDeviation()
-
-	//fmt.Printf("%d: has recieved heartbeat from %d in term %d\n", n.id, in.Sender, n.term)
 
 	return &pb.Reply{Granted: true}, nil
 }

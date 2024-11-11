@@ -1,0 +1,13 @@
+2024/11/11 16:56:15 0 is calling an election in term 1
+2024/11/11 16:56:15 3 is calling an election in term 1
+2024/11/11 16:56:15 Node 3 has lost its election in term 1
+2024/11/11 16:56:15 Node 0 has won its election in term 1
+2024/11/11 16:56:15 4: Im using the critical resource!!
+2024/11/11 16:56:20 0 died
+2024/11/11 16:56:20 4: I have released the critical resource!!
+2024/11/11 16:56:22 3 is calling an election in term 2
+2024/11/11 16:56:22 Node 3 has won its election in term 2
+2024/11/11 16:56:22 1: Im using the critical resource!!
+2024/11/11 16:56:27 1: I have released the critical resource!!
+2024/11/11 16:56:27 4: Im using the critical resource!!
+2024/11/11 16:56:32 4: I have released the critical resource!!
